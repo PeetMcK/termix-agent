@@ -299,6 +299,94 @@ func (f *FileOps) RenameItem(data *RenameItemData) {
 	f.sendOpResult(data.RequestID, true, "Renamed successfully", "")
 }
 
+// StreamFileInfo returns file metadata for streaming
+func (f *FileOps) StreamFileInfo(data *StreamFileInfoData) {
+	log.Debug().Str("path", data.Path).Msg("stream file info request")
+
+	info, err := os.Stat(data.Path)
+	if err != nil {
+		f.sendResult(MsgTypeStreamFileInfoResponse, StreamFileInfoResponseData{
+			RequestID: data.RequestID,
+			Path:      data.Path,
+			Error:     fmt.Sprintf("Failed to stat file: %v", err),
+		})
+		return
+	}
+
+	if info.IsDir() {
+		f.sendResult(MsgTypeStreamFileInfoResponse, StreamFileInfoResponseData{
+			RequestID: data.RequestID,
+			Path:      data.Path,
+			Error:     "Cannot stream a directory",
+		})
+		return
+	}
+
+	// Detect MIME type
+	mimeType := mime.TypeByExtension(filepath.Ext(data.Path))
+	if mimeType == "" {
+		mimeType = "application/octet-stream"
+	}
+
+	f.sendResult(MsgTypeStreamFileInfoResponse, StreamFileInfoResponseData{
+		RequestID: data.RequestID,
+		Path:      data.Path,
+		FileName:  filepath.Base(data.Path),
+		MimeType:  mimeType,
+		Size:      info.Size(),
+	})
+}
+
+// StreamChunk reads and returns a chunk of a file
+func (f *FileOps) StreamChunk(data *StreamChunkData) {
+	log.Debug().
+		Str("path", data.Path).
+		Int64("offset", data.Offset).
+		Int64("length", data.Length).
+		Msg("stream chunk request")
+
+	file, err := os.Open(data.Path)
+	if err != nil {
+		f.sendResult(MsgTypeStreamChunkResponse, StreamChunkResponseData{
+			RequestID: data.RequestID,
+			Error:     fmt.Sprintf("Failed to open file: %v", err),
+		})
+		return
+	}
+	defer file.Close()
+
+	// Seek to offset
+	_, err = file.Seek(data.Offset, io.SeekStart)
+	if err != nil {
+		f.sendResult(MsgTypeStreamChunkResponse, StreamChunkResponseData{
+			RequestID: data.RequestID,
+			Error:     fmt.Sprintf("Failed to seek: %v", err),
+		})
+		return
+	}
+
+	// Read chunk
+	chunk := make([]byte, data.Length)
+	n, err := io.ReadFull(file, chunk)
+	if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
+		f.sendResult(MsgTypeStreamChunkResponse, StreamChunkResponseData{
+			RequestID: data.RequestID,
+			Error:     fmt.Sprintf("Failed to read: %v", err),
+		})
+		return
+	}
+
+	// Only return actual bytes read
+	chunk = chunk[:n]
+
+	f.sendResult(MsgTypeStreamChunkResponse, StreamChunkResponseData{
+		RequestID: data.RequestID,
+		Offset:    data.Offset,
+		Length:    int64(n),
+		Data:      base64.StdEncoding.EncodeToString(chunk),
+	})
+}
+
 // fileInfoToItem converts os.FileInfo to FileItem
 func (f *FileOps) fileInfoToItem(path string, info fs.FileInfo) FileItem {
 	item := FileItem{

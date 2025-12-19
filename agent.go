@@ -310,6 +310,12 @@ func (a *Agent) handleMessage(data []byte) error {
 	case MsgTypeRenameItem:
 		return a.handleRenameItem(msg)
 
+	// Streaming file operations
+	case MsgTypeStreamFileInfo:
+		return a.handleStreamFileInfo(msg)
+	case MsgTypeStreamChunk:
+		return a.handleStreamChunk(msg)
+
 	default:
 		log.Warn().Str("type", msg.Type).Msg("unknown message type")
 	}
@@ -565,5 +571,31 @@ func (a *Agent) handleRenameItem(msg *Message) error {
 
 	log.Info().Str("path", data.Path).Str("newName", data.NewName).Msg("rename item request")
 	go a.fileOps.RenameItem(data)
+	return nil
+}
+
+func (a *Agent) handleStreamFileInfo(msg *Message) error {
+	data, err := UnmarshalData[StreamFileInfoData](msg)
+	if err != nil {
+		return err
+	}
+
+	log.Info().Str("path", data.Path).Msg("stream file info request")
+	go a.fileOps.StreamFileInfo(data)
+	return nil
+}
+
+func (a *Agent) handleStreamChunk(msg *Message) error {
+	data, err := UnmarshalData[StreamChunkData](msg)
+	if err != nil {
+		return err
+	}
+
+	log.Debug().
+		Str("path", data.Path).
+		Int64("offset", data.Offset).
+		Int64("length", data.Length).
+		Msg("stream chunk request")
+	go a.fileOps.StreamChunk(data)
 	return nil
 }

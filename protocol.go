@@ -31,15 +31,21 @@ const (
 	MsgTypePing        = "ping"
 
 	// File operations (Server → Agent)
-	MsgTypeListFiles    = "list_files"
-	MsgTypeDownloadFile = "download_file"
-	MsgTypeUploadFile   = "upload_file"
-	MsgTypeCreateFile   = "create_file"
-	MsgTypeCreateFolder = "create_folder"
-	MsgTypeDeleteItem   = "delete_item"
-	MsgTypeCopyItem     = "copy_item"
-	MsgTypeMoveItem     = "move_item"
-	MsgTypeRenameItem   = "rename_item"
+	MsgTypeListFiles      = "list_files"
+	MsgTypeDownloadFile   = "download_file"
+	MsgTypeUploadFile     = "upload_file"
+	MsgTypeCreateFile     = "create_file"
+	MsgTypeCreateFolder   = "create_folder"
+	MsgTypeDeleteItem     = "delete_item"
+	MsgTypeCopyItem       = "copy_item"
+	MsgTypeMoveItem       = "move_item"
+	MsgTypeRenameItem     = "rename_item"
+	MsgTypeStreamFileInfo = "stream_file_info"  // Get file metadata for streaming
+	MsgTypeStreamChunk    = "stream_chunk"      // Request file chunk
+
+	// Streaming responses (Agent → Server)
+	MsgTypeStreamFileInfoResponse = "stream_file_info_response"
+	MsgTypeStreamChunkResponse    = "stream_chunk_response"
 )
 
 // Message is the generic wrapper for all JSON messages
@@ -293,4 +299,39 @@ type FileErrorData struct {
 	RequestID string `json:"requestId"`
 	Code      int    `json:"code"`
 	Message   string `json:"message"`
+}
+
+// --- Streaming File Operation Messages ---
+
+// StreamFileInfoData requests file metadata for streaming
+type StreamFileInfoData struct {
+	RequestID string `json:"requestId"`
+	Path      string `json:"path"`
+}
+
+// StreamFileInfoResponseData returns file metadata
+type StreamFileInfoResponseData struct {
+	RequestID string `json:"requestId"`
+	Path      string `json:"path"`
+	FileName  string `json:"fileName"`
+	MimeType  string `json:"mimeType"`
+	Size      int64  `json:"size"`
+	Error     string `json:"error,omitempty"`
+}
+
+// StreamChunkData requests a chunk of a file
+type StreamChunkData struct {
+	RequestID string `json:"requestId"`
+	Path      string `json:"path"`
+	Offset    int64  `json:"offset"`
+	Length    int64  `json:"length"`
+}
+
+// StreamChunkResponseData returns a chunk of file data
+type StreamChunkResponseData struct {
+	RequestID string `json:"requestId"`
+	Offset    int64  `json:"offset"`
+	Length    int64  `json:"length"`
+	Data      string `json:"data"` // base64 encoded chunk
+	Error     string `json:"error,omitempty"`
 }
