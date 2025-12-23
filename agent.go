@@ -316,6 +316,12 @@ func (a *Agent) handleMessage(data []byte) error {
 	case MsgTypeStreamChunk:
 		return a.handleStreamChunk(msg)
 
+	case MsgTypeCompressFiles:
+		return a.handleCompressFiles(msg)
+
+	case MsgTypeGetDirStats:
+		return a.handleGetDirStats(msg)
+
 	default:
 		log.Warn().Str("type", msg.Type).Msg("unknown message type")
 	}
@@ -597,5 +603,33 @@ func (a *Agent) handleStreamChunk(msg *Message) error {
 		Int64("length", data.Length).
 		Msg("stream chunk request")
 	go a.fileOps.StreamChunk(data)
+	return nil
+}
+
+func (a *Agent) handleCompressFiles(msg *Message) error {
+	data, err := UnmarshalData[CompressFilesData](msg)
+	if err != nil {
+		return err
+	}
+
+	log.Debug().
+		Strs("paths", data.Paths).
+		Str("archiveName", data.ArchiveName).
+		Str("format", data.Format).
+		Msg("compress files request")
+	go a.fileOps.CompressFiles(data)
+	return nil
+}
+
+func (a *Agent) handleGetDirStats(msg *Message) error {
+	data, err := UnmarshalData[GetDirStatsData](msg)
+	if err != nil {
+		return err
+	}
+
+	log.Debug().
+		Str("path", data.Path).
+		Msg("get dir stats request")
+	go a.fileOps.GetDirStats(data)
 	return nil
 }

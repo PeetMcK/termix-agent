@@ -42,10 +42,13 @@ const (
 	MsgTypeRenameItem     = "rename_item"
 	MsgTypeStreamFileInfo = "stream_file_info"  // Get file metadata for streaming
 	MsgTypeStreamChunk    = "stream_chunk"      // Request file chunk
+	MsgTypeCompressFiles  = "compress_files"   // Compress files into archive
+	MsgTypeGetDirStats    = "get_dir_stats"    // Get directory statistics
 
 	// Streaming responses (Agent → Server)
 	MsgTypeStreamFileInfoResponse = "stream_file_info_response"
 	MsgTypeStreamChunkResponse    = "stream_chunk_response"
+	MsgTypeDirStats               = "dir_stats"
 )
 
 // Message is the generic wrapper for all JSON messages
@@ -139,6 +142,7 @@ type ExecCmdData struct {
 	Username string   `json:"username,omitempty"`
 	Command  string   `json:"command"`
 	Args     []string `json:"args,omitempty"`
+	Timeout  int      `json:"timeout,omitempty"` // timeout in seconds, 0 = default (30s)
 }
 
 // --- Helper functions ---
@@ -251,6 +255,30 @@ type RenameItemData struct {
 	RequestID string `json:"requestId"`
 	Path      string `json:"path"`
 	NewName   string `json:"newName"`
+}
+
+// CompressFilesData compresses files into an archive
+type CompressFilesData struct {
+	RequestID   string   `json:"requestId"`
+	Paths       []string `json:"paths"`       // Files/folders to compress
+	ArchiveName string   `json:"archiveName"` // Output archive name
+	Format      string   `json:"format"`      // zip, tar.gz, tar.bz2, tar.xz, tar, 7z
+}
+
+// GetDirStatsData requests directory statistics
+type GetDirStatsData struct {
+	RequestID string `json:"requestId"`
+	Path      string `json:"path"`
+}
+
+// DirStatsData contains directory statistics response
+type DirStatsData struct {
+	RequestID   string `json:"requestId"`
+	Path        string `json:"path"`
+	TotalSize   int64  `json:"totalSize"`
+	FileCount   int64  `json:"fileCount"`
+	FolderCount int64  `json:"folderCount"`
+	Error       string `json:"error,omitempty"`
 }
 
 // --- File Operation Response Messages (Agent → Server) ---

@@ -16,8 +16,9 @@ import (
 )
 
 const (
-	cmdRunningLimit = 5
-	cmdExecTimeout  = 30 * time.Second
+	cmdRunningLimit        = 5
+	cmdExecDefaultTimeout  = 30 * time.Second
+	cmdExecMaxTimeout      = 600 * time.Second // 10 minutes max
 )
 
 // CmdError codes
@@ -72,24 +73,33 @@ func (e *CommandExecutor) Execute(cmd *ExecCmdData) {
 		return
 	}
 
+	// Determine timeout
+	timeout := cmdExecDefaultTimeout
+	if cmd.Timeout > 0 {
+		timeout = time.Duration(cmd.Timeout) * time.Second
+		if timeout > cmdExecMaxTimeout {
+			timeout = cmdExecMaxTimeout
+		}
+	}
+
 	// Try to acquire semaphore
 	select {
 	case cmdSemaphore <- struct{}{}:
-		go e.executeCommand(u, cmdPath, cmd.Args, cmd.Token)
+		go e.executeCommand(u, cmdPath, cmd.Args, cmd.Token, timeout)
 	default:
 		log.Warn().Int("limit", cmdRunningLimit).Msg("command limit reached")
 		e.sendError(cmd.Token, CmdErrNoMem, "too many concurrent commands")
 	}
 }
 
-func (e *CommandExecutor) executeCommand(u *user.User, cmdPath string, args []string, token string) {
+func (e *CommandExecutor) executeCommand(u *user.User, cmdPath string, args []string, token string, timeout time.Duration) {
 	defer func() {
 		<-cmdSemaphore
 	}()
 
-	log.Debug().Str("command", cmdPath).Strs("args", args).Str("token", token).Msg("executing command")
+	log.Debug().Str("command", cmdPath).Strs("args", args).Str("token", token).Dur("timeout", timeout).Msg("executing command")
 
-	ctx, cancel := context.WithTimeout(context.Background(), cmdExecTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, cmdPath, args...)

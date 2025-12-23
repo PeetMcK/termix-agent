@@ -3,17 +3,21 @@
 package main
 
 import (
+	"bytes"
+	"context"
 	"encoding/base64"
 	"fmt"
 	"io"
 	"io/fs"
 	"mime"
 	"os"
+	"os/exec"
 	"os/user"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/rs/zerolog/log"
 )
@@ -385,6 +389,178 @@ func (f *FileOps) StreamChunk(data *StreamChunkData) {
 		Length:    int64(n),
 		Data:      base64.StdEncoding.EncodeToString(chunk),
 	})
+}
+
+// GetDirStats calculates directory statistics (size, file count, folder count)
+func (f *FileOps) GetDirStats(data *GetDirStatsData) {
+	log.Debug().Str("path", data.Path).Msg("getting directory stats")
+
+	info, err := os.Stat(data.Path)
+	if err != nil {
+		log.Error().Err(err).Str("path", data.Path).Msg("failed to stat path for dir stats")
+		f.sendResult(MsgTypeDirStats, DirStatsData{
+			RequestID: data.RequestID,
+			Path:      data.Path,
+			Error:     fmt.Sprintf("Failed to stat path: %v", err),
+		})
+		return
+	}
+
+	// If it's a file, just return its size
+	if !info.IsDir() {
+		f.sendResult(MsgTypeDirStats, DirStatsData{
+			RequestID:   data.RequestID,
+			Path:        data.Path,
+			TotalSize:   info.Size(),
+			FileCount:   1,
+			FolderCount: 0,
+		})
+		return
+	}
+
+	// Walk directory recursively
+	var totalSize int64
+	var fileCount int64
+	var folderCount int64
+
+	err = filepath.Walk(data.Path, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			// Skip files/dirs we can't access
+			return nil
+		}
+
+		if info.IsDir() {
+			// Don't count the root directory itself
+			if path != data.Path {
+				folderCount++
+			}
+		} else {
+			fileCount++
+			totalSize += info.Size()
+		}
+		return nil
+	})
+
+	if err != nil {
+		log.Error().Err(err).Str("path", data.Path).Msg("failed to walk directory for stats")
+		f.sendResult(MsgTypeDirStats, DirStatsData{
+			RequestID: data.RequestID,
+			Path:      data.Path,
+			Error:     fmt.Sprintf("Failed to walk directory: %v", err),
+		})
+		return
+	}
+
+	log.Debug().
+		Str("path", data.Path).
+		Int64("totalSize", totalSize).
+		Int64("fileCount", fileCount).
+		Int64("folderCount", folderCount).
+		Msg("directory stats calculated")
+
+	f.sendResult(MsgTypeDirStats, DirStatsData{
+		RequestID:   data.RequestID,
+		Path:        data.Path,
+		TotalSize:   totalSize,
+		FileCount:   fileCount,
+		FolderCount: folderCount,
+	})
+}
+
+// CompressFiles compresses files into an archive
+func (f *FileOps) CompressFiles(data *CompressFilesData) {
+	log.Debug().
+		Strs("paths", data.Paths).
+		Str("archiveName", data.ArchiveName).
+		Str("format", data.Format).
+		Msg("compressing files")
+
+	if len(data.Paths) == 0 {
+		log.Warn().Msg("compress request with no files")
+		f.sendError(data.RequestID, 400, "No files to compress")
+		return
+	}
+
+	// Determine working directory from first path
+	firstPath := data.Paths[0]
+	workingDir := filepath.Dir(firstPath)
+
+	// Get base names for files
+	var fileNames []string
+	for _, p := range data.Paths {
+		fileNames = append(fileNames, filepath.Base(p))
+	}
+
+	// Determine archive path
+	archivePath := data.ArchiveName
+	if !strings.Contains(archivePath, "/") {
+		archivePath = filepath.Join(workingDir, archivePath)
+	}
+
+	// Build compression command based on format
+	var cmd *exec.Cmd
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	format := data.Format
+	if format == "" {
+		format = "zip"
+	}
+
+	switch format {
+	case "zip":
+		args := append([]string{"-r", archivePath}, fileNames...)
+		cmd = exec.CommandContext(ctx, "zip", args...)
+	case "tar.gz", "tgz":
+		args := append([]string{"-czf", archivePath}, fileNames...)
+		cmd = exec.CommandContext(ctx, "tar", args...)
+	case "tar.bz2", "tbz2":
+		args := append([]string{"-cjf", archivePath}, fileNames...)
+		cmd = exec.CommandContext(ctx, "tar", args...)
+	case "tar.xz":
+		args := append([]string{"-cJf", archivePath}, fileNames...)
+		cmd = exec.CommandContext(ctx, "tar", args...)
+	case "tar":
+		args := append([]string{"-cf", archivePath}, fileNames...)
+		cmd = exec.CommandContext(ctx, "tar", args...)
+	case "7z":
+		args := append([]string{"a", archivePath}, fileNames...)
+		cmd = exec.CommandContext(ctx, "7z", args...)
+	default:
+		log.Warn().Str("format", format).Msg("unsupported compression format")
+		f.sendError(data.RequestID, 400, fmt.Sprintf("Unsupported compression format: %s", format))
+		return
+	}
+
+	cmd.Dir = workingDir
+
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	err := cmd.Run()
+	if err != nil {
+		errMsg := stderr.String()
+		if errMsg == "" {
+			errMsg = err.Error()
+		}
+		log.Error().
+			Err(err).
+			Str("archivePath", archivePath).
+			Str("format", format).
+			Str("stderr", errMsg).
+			Msg("compression failed")
+		f.sendError(data.RequestID, 500, fmt.Sprintf("Compression failed: %s", errMsg))
+		return
+	}
+
+	log.Debug().
+		Str("archivePath", archivePath).
+		Str("format", format).
+		Int("fileCount", len(data.Paths)).
+		Msg("compression completed successfully")
+
+	f.sendOpResult(data.RequestID, true, fmt.Sprintf("Created %s", archivePath), "")
 }
 
 // fileInfoToItem converts os.FileInfo to FileItem
